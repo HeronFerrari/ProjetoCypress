@@ -39,9 +39,6 @@ describe('Fluxo Completo de Comércio Eletrônico', () => {
         // Tenta encontrar o banner de LGPD (Cookies) - Usando a palavra "ACEITAR" no botão
         clickIfVisible('button:contains("ACEITAR"), button[aria-label*="Concordar com os cookies"]', 7000);
         
-        // CORREÇÃO CRÍTICA: Tenta clicar no X do pop-up de CEP
-        clickIfVisible('span[aria-label="Fechar"], .sc-d91d9006-2', 5000); // Palpite baseado em estrutura similar
-
         // Tenta fechar o Toast de Cashback (o que você inspecionou antes)
         clickIfVisible('#cuponomia-data-v-app .btn-close');
 
@@ -82,16 +79,13 @@ describe('Fluxo Completo de Comércio Eletrônico', () => {
         cy.visit(URL_BASE + 'produto/520038/processador-amd-ryzen-7-5700x3d-3-0ghz-4-1ghz-max-turbo-cache-16-threads-8-nucleos-am4-sem-cooler-100-100001503mpk'); 
 
         // CRÍTICO: TRATAMENTO DO POP-UP DE PREÇO AQUI (DEPOIS DA PÁGINA DO PRODUTO CARREGAR)
-        // Tentativa 1: Clicar no botão 'Entendi e continuar' ou 'Comprar agora' do modal de preço
+        // Tentativa 1: Clicar no botão 'Mais Tarde' do modal de preço
         cy.get('body', { timeout: 7000 }).then(($body) => {
-            // Simplificamos o texto para buscar apenas "Comprar" ou "Continuar", que é mais provável.
-            const btnContinuar = $body.find('button:contains("Continuar")'); 
-            const btnComprarAgora = $body.find('button:contains("Comprar agora")'); 
-            const btnEntendi = $body.find('button:contains("Entendi e continuar")'); // Novo palpite
+            const btnMaisTarde = $body.find('button:contains("Mais Tarde")'); 
 
-            if (btnContinuar.length || btnComprarAgora.length || btnEntendi.length) {
-                cy.wrap(btnContinuar.length ? btnContinuar : (btnComprarAgora.length ? btnComprarAgora : btnEntendi)).click({ force: true });
-                cy.log('Modal de comparação de preços descartado/clicado.');
+            if (btnMaisTarde.length) {
+                cy.wrap(btnMaisTarde).click({ force: true });
+                cy.log('Modal de comparação de preços (Mais Tarde) descartado/clicado.');
                 cy.wait(1000); // Espera o modal sumir
             } else {
                 cy.log('Modal de comparação de preços não apareceu, prosseguindo.');
@@ -101,7 +95,7 @@ describe('Fluxo Completo de Comércio Eletrônico', () => {
 
         // 2. Valida o preço antes de adicionar 
         let precoProduto = 0;
-        // SELETOR REAL DO PREÇO DE VENDA (AGORA COM UM TIMEOUT MAIOR PARA RESISTIR AOS MODAIS)
+        // SELETOR REAL DO PREÇO DE VENDA 
         cy.get('h4.text-4xl.text-secondary', { timeout: 10000 }) 
           .invoke('text') 
           .then(precoTexto => {
@@ -111,7 +105,7 @@ describe('Fluxo Completo de Comércio Eletrônico', () => {
           });
 
         // 3. Adiciona ao carrinho (USANDO O SELETOR REAL DO BOTÃO)
-        cy.get('button[aria-label="Adicionar ao carrinho"]').click(); // <-- SELETOR CORRIGIDO
+        cy.get('button[aria-label="Adicionar ao carrinho"]').click(); 
         cy.log('Produto adicionado ao carrinho.');
 
         // 4. Navega para a página do carrinho (Seletor precisa ser real!)
