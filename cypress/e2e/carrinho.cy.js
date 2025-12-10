@@ -79,6 +79,8 @@ describe('Fluxo Completo de Comércio Eletrônico', () => {
 
                 // 1. Visita a página do produto
                 cy.visit(URL_PRODUTO, { timeout: 20000 });
+                // screenshot: página do produto carregada
+                cy.screenshot('produto_page');
 
                 // 1.1. Tenta fechar vários tipos de banners/cookies (mais resiliente)
                 const cookieSelectors = [
@@ -130,6 +132,8 @@ describe('Fluxo Completo de Comércio Eletrônico', () => {
                         // 3.2 Aguarda a requisição que adiciona ao carrinho (se houver). Se não ocorrer em 8s, apenas prossegue para validação visual.
                         cy.wait('@addCart', { timeout: 8000 }).then((interception) => {
                             cy.log('Chamada de rede para adicionar ao carrinho detectada.');
+                            // screenshot: após adicionar ao carrinho (mini-cart / toast)
+                            cy.screenshot('apos_add');
                             
                             // 3.3 Captura e loga o payload enviado e resposta recebida
                             if (interception && interception.request) {
@@ -163,6 +167,8 @@ describe('Fluxo Completo de Comércio Eletrônico', () => {
                         cy.contains(/R\$\s*[0-9]/, { timeout: 30000 })
                           .should('be.visible')
                           .then(() => {
+                            // screenshot: página do carrinho carregada com valores visíveis
+                            cy.screenshot('carrinho_page');
                               const pageText = Cypress.$('body').text();
                               const matches = pageText.match(/R\$\s*[0-9\.\,]+/g);
                               let found = null;
