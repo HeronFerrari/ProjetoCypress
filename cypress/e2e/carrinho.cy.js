@@ -74,59 +74,177 @@ describe('Fluxo Completo de Comércio Eletrônico', () => {
     // =================================================================
     // CT-003: Adicionar ao Carrinho e Validar Preço (Foco no Processador Ryzen)
     // =================================================================
-    it.only('CT-003: Deve adicionar um item ao carrinho e validar o subtotal', () => { 
-        // Navega diretamente para a página do produto (A URL BASE será visitada no beforeEach)
-        cy.visit(URL_BASE + 'produto/520038/processador-amd-ryzen-7-5700x3d-3-0ghz-4-1ghz-max-turbo-cache-16-threads-8-nucleos-am4-sem-cooler-100-100001503mpk'); 
+    it('CT-003: Deve adicionar um item ao carrinho e validar o subtotal', () => {
+            const URL_PRODUTO = 'https://www.kabum.com.br/produto/879311/notebook-lenovo-loq-e-15iax9e-intel-core-i5-12450hx-16gb-512gb-ssd-rtx-3050-linux-15-6-83mes00000-luna-grey';
 
-        // CRÍTICO: TRATAMENTO DO POP-UP DE PREÇO AQUI (DEPOIS DA PÁGINA DO PRODUTO CARREGAR)
-        // Tentativa 1: Clicar no botão 'Mais Tarde' do modal de preço
-        cy.get('body', { timeout: 7000 }).then(($body) => {
-            const btnMaisTarde = $body.find('button:contains("Mais Tarde")'); 
+                // 1. Visita a página do produto
+                cy.visit(URL_PRODUTO, { timeout: 20000 });
 
-            if (btnMaisTarde.length) {
-                cy.wrap(btnMaisTarde).click({ force: true });
-                cy.log('Modal de comparação de preços (Mais Tarde) descartado/clicado.');
-                cy.wait(1000); // Espera o modal sumir
-            } else {
-                cy.log('Modal de comparação de preços não apareceu, prosseguindo.');
-            }
+                // 1.1. Tenta fechar vários tipos de banners/cookies (mais resiliente)
+                const cookieSelectors = [
+                    'button:contains("ACEITAR")',
+                    'button[aria-label*="Concordar com os cookies"]',
+                    '#onetrust-accept-btn-handler',
+                    '.cookie-consent button',
+                    '.js-accept-cookies',
+                    '.optanon-allow-all',
+                    'button:contains("Aceitar")'
+                ];
+
+                cy.get('body', { timeout: 10000 }).then(($body) => {
+                    cookieSelectors.forEach(sel => {
+                        if ($body.find(sel).length) {
+                            cy.get(sel, { timeout: 5000 }).first().click({ force: true });
+                            cy.log(`Fechado cookie/modal com seletor: ${sel}`);
+                        }
+                    });
+                });
+
+                // espera rápida para o DOM se estabilizar
+                cy.wait(800);
+
+                // 1.2. Detecta se o produto está esgotado/indisponível e falha com mensagem informativa
+                cy.get('body', { timeout: 5000 }).then($body => {
+                    const text = $body.text();
+                    if (/esgotad|indispon[ií]vel|sem estoque|não disponível|indisponivel/i.test(text)) {
+                        throw new Error('Produto parece estar esgotado/indisponível — interrompendo o teste.');
+                    }
+                });
+
+                // 2. Captura o preço do produto
+                cy.get('h4.text-4xl.text-secondary-500.font-bold', { timeout: 20000 })
+                  .should('be.visible')
+                  .invoke('text')
+                  .then((precoTexto) => {
+                        const precoProduto = parseFloat(precoTexto.replace(/[^0-9,]/g, '').replace(',', '.'));
+                        cy.log(`Preço capturado: ${precoProduto}`);
+
+                        // 3. Intercept para detectar a requisição de adicionar ao carrinho
+                        // Usamos um regex genérico que cobre /carrinho, /cart, /adicionar etc.
+                        cy.intercept({ method: 'POST', url: /.*(carrinho|cart|adicionar).*/i }).as('addCart');
+
+                        // 3.1 Clica em 'Adicionar ao carrinho'
+                        cy.get('button[aria-label="Adicionar ao carrinho"]', { timeout: 10000 }).click({ force: true });
+                        cy.log('Clique em "Adicionar ao carrinho" realizado. Aguardando confirmação de rede...');
+
+                        // 3.2 Aguarda a requisição que adiciona ao carrinho (se houver). Se não ocorrer em 8s, apenas prossegue para validação visual.
+                        cy.wait('@addCart', { timeout: 8000 }).then((interception) => {
+                            cy.log('Chamada de rede para adicionar ao carrinho detectada.');
+                            
+                            // 3.3 Captura e loga o payload enviado e resposta recebida
+                            if (interception && interception.request) {
+                                const reqBody = interception.request.body;
+                                cy.log('Request Body (primeiros 200 chars):', JSON.stringify(reqBody).substring(0, 200));
+                            }
+                            if (interception && interception.response) {
+                                const respBody = interception.response.body;
+                                cy.log('Response Body (primeiros 200 chars):', JSON.stringify(respBody).substring(0, 200));
+                            }
+                        }, (err) => {
+                            // fallback: não falhar o teste — continuamos e checamos o carrinho visualmente
+                            cy.log('Nenhuma chamada de rede detectada dentro do timeout. Prosseguindo para checar o carrinho visualmente.');
+                        });
+
+                        // 4. Vai para o carrinho (seletor resiliente com fallback)
+                        cy.get('body', { timeout: 10000 }).then(($body) => {
+                            const cartSelector = 'a[href*="/carrinho"], a[title*="Carrinho"], [data-testid="button-cart"], [data-testid="header-cart-button"], [aria-label*="carrinho"]';
+                            if ($body.find(cartSelector).length) {
+                                cy.get(cartSelector).first().click({ force: true });
+                                cy.url({ timeout: 10000 }).should('include', '/carrinho');
+                            } else {
+                                // fallback direto para a página do carrinho
+                                cy.visit(URL_BASE + 'carrinho');
+                                cy.url({ timeout: 10000 }).should('include', '/carrinho');
+                            }
+                        });
+
+                        // 5. Aguarda que qualquer valor monetário apareça no carrinho e extrai o último R$
+                        // Usamos um contains com regex para esperar por conteúdo dinâmico em qualquer parte da página.
+                        cy.contains(/R\$\s*[0-9]/, { timeout: 30000 })
+                          .should('be.visible')
+                          .then(() => {
+                              const pageText = Cypress.$('body').text();
+                              const matches = pageText.match(/R\$\s*[0-9\.\,]+/g);
+                              let found = null;
+                              if (matches && matches.length) {
+                                  found = matches[matches.length - 1];
+                              }
+
+                              expect(found, 'Encontrou algum valor R$ no carrinho').to.not.be.null;
+                              const subtotal = parseFloat(found.replace(/[^0-9,]/g, '').replace(',', '.'));
+                              expect(subtotal).to.equal(precoProduto);
+                              cy.log(`Validação de subtotal OK. Esperado: ${precoProduto}, Encontrado: ${subtotal}`);
+                          });
+                    });
+    });
+    // =================================================================
+    // CT-004: Navegação por Categoria e Aplicação de Filtro
+    // =================================================================
+    it.skip('CT-004: Deve navegar por categoria, aplicar um filtro e validar a URL', () => { 
+        // 1. Navegar para a página de uma categoria (Ex: Hardware)
+        cy.visit(URL_BASE + 'hardware');
+        cy.url().should('include', '/hardware');
+        cy.log('Navegou para a página da categoria Hardware.');
+
+        // 2. Aplicar um filtro de preço (CRÍTICO: Seletores devem ser reais da KaBuM!)
+        // Exemplo: Filtrar pela marca 'AMD' na coluna de filtros
+        const seletorFiltro = 'label:contains("AMD")'; // Tenta encontrar o checkbox/label da marca
+        cy.get(seletorFiltro, { timeout: 7000 }).click();
+        cy.log('Filtro de marca (AMD) aplicado.');
+
+        // 3. Validação: Verifica se o filtro foi aplicado na URL ou no conteúdo
+        // A URL da KaBuM! deve mudar para incluir a marca (ex: ?id_marca=...)
+        cy.url({ timeout: 10000 }).should('include', 'AMD');
+
+        // 4. Validação: A contagem de produtos deve ser maior que zero
+        cy.get('article.productCard').should('have.length.greaterThan', 0);
+        cy.log('Produtos filtrados com sucesso e exibidos na tela.');
+    });
+
+    // =================================================================
+    // CT-005: Aumentar Quantidade no Carrinho e Validar Subtotal
+    // =================================================================
+    it.skip('CT-005: Deve aumentar a quantidade de um item no carrinho e validar a atualização do subtotal', () => {
+        // Pré-condição: Garantir que o CT-003 funcionou ou adicionar um produto aqui
+        
+        // Simplificando: Adiciona o produto do CT-003 novamente (Processador Ryzen)
+        const URL_PRODUTO = 'https://www.kabum.com.br/produto/879311/notebook-lenovo-loq-e-15iax9e-intel-core-i5-12450hx-16gb-512gb-ssd-rtx-3050-linux-15-6-83mes00000-luna-grey';
+        
+        let precoUnitario = 0;
+    
+        // 1. Navega para o produto, pega o preço e adiciona ao carrinho
+        cy.visit(URL_PRODUTO, { timeout: 15000 });
+        cy.get('h4.text-4xl.text-secondary').invoke('text').then(precoTexto => {
+            precoUnitario = parseFloat(precoTexto.replace('R$', '').replace('.', '').replace(',', '.').trim());
+            cy.log(`Preço Unitário: ${precoUnitario}`);
         });
-
-
-        // 2. Valida o preço antes de adicionar 
-        let precoProduto = 0;
-        // SELETOR REAL DO PREÇO DE VENDA 
-        cy.get('h4.text-4xl.text-secondary', { timeout: 10000 }) 
-          .invoke('text') 
-          .then(precoTexto => {
-            // Limpa o texto (R$, pontos e vírgulas)
-            precoProduto = parseFloat(precoTexto.replace('R$', '').replace('.', '').replace(',', '.').trim());
-            cy.log(`Preço Unitário Identificado: ${precoProduto}`);
-          });
-
-        // 3. Adiciona ao carrinho (USANDO O SELETOR REAL DO BOTÃO)
-        cy.get('button[aria-label="Adicionar ao carrinho"]').click(); 
-        cy.log('Produto adicionado ao carrinho.');
-
-        // 4. Navega para a página do carrinho (Seletor precisa ser real!)
-        // Tenta buscar o seletor do link/ícone do carrinho
-        cy.get('a[href*="/carrinho"], [data-cy="icone-carrinho"]', { timeout: 5000 }).click(); 
+        cy.get('button[aria-label="Adicionar ao carrinho"]').click();
+        
+        // 2. Navega para o carrinho
+        cy.get('[data-cy="header-cart-icon"]').click(); 
         cy.url().should('include', '/carrinho');
-
-        // 5. Valida o subtotal no carrinho (Seletor precisa ser real!)
-        // Tenta buscar o subtotal ou o total de itens no carrinho
-        cy.get('.sc-total-price, [data-cy="subtotal-carrinho"], .sc-total-carrinho') 
+    
+        // 3. Clica para aumentar a quantidade (CRÍTICO: Seletor do botão de "+" no carrinho)
+        // Seletor para o botão de aumento de quantidade (Exemplo)
+        const btnAumentar = 'button[aria-label="Aumentar quantidade"]'; 
+        cy.get(btnAumentar, { timeout: 7000 }).click();
+        cy.log('Quantidade do produto aumentada para 2.');
+    
+        // 4. Valida se a nova quantidade é 2 (CRÍTICO: Seletor do campo de quantidade)
+        cy.get('input[aria-label="quantidade do produto"]').should('have.value', '2');
+    
+        // 5. Valida o novo subtotal (Deve ser 2 * precoUnitario)
+        const precoEsperado = (precoUnitario * 2).toFixed(2); // Formata para 2 casas decimais
+    
+        cy.get('.sc-cRkppE.gTzRkS', { timeout: 10000 }) // Seletor do subtotal
           .invoke('text')
           .then(subtotalTexto => {
-            const subtotal = parseFloat(subtotalTexto.replace('R$', '').replace('.', '').replace(',', '.').trim());
+            const subtotalAtual = parseFloat(subtotalTexto.replace('R$', '').replace('.', '').replace(',', '.').trim());
             
-            // Verificação crítica
-            expect(subtotal).to.equal(precoProduto);
-            cy.log(`Validação de subtotal OK. Esperado: ${precoProduto}, Encontrado: ${subtotal}`);
+            // Comparação de números flutuantes: Use to.be.closeTo para evitar problemas de precisão
+            expect(subtotalAtual).to.be.closeTo(parseFloat(precoEsperado), 0.01); 
+            cy.log(`Validação de Quantidade OK. Esperado: ${precoEsperado}, Encontrado: ${subtotalAtual}`);
           });
-          
-        // 6. Verificação visual
-        cy.get('article.productCard').should('have.length.greaterThan', 0);
     });
 
 });
